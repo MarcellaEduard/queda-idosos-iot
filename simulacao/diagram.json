@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "author": "Maarcella - Sistema IoT de Detecao de Quedas (ODS 3)",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-mpu6050", "id": "mpu", "top": -120, "left": 260, "attrs": {} },
+    { "type": "wokwi-buzzer", "id": "buzzer", "top": 60, "left": 260, "attrs": {} },
+    { "type": "wokwi-led", "id": "led", "top": 140, "left": 260, "attrs": { "color": "red" } },
+    { "type": "wokwi-resistor", "id": "r1", "top": 140, "left": 300, "attrs": { "value": "220" } },
+    { "type": "wokwi-pushbutton", "id": "btn", "top": 210, "left": 260, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+
+    [ "mpu:VCC", "esp:3V3", "red", [] ],
+    [ "mpu:GND", "esp:GND.1", "black", [] ],
+    [ "mpu:SDA", "esp:21", "green", [] ],
+    [ "mpu:SCL", "esp:22", "blue", [] ],
+
+    [ "buzzer:1", "esp:4", "orange", [] ],
+    [ "buzzer:2", "esp:GND.2", "black", [] ],
+
+    [ "led:A", "r1:1", "red", [] ],
+    [ "r1:2", "esp:2", "red", [] ],
+    [ "led:C", "esp:GND.3", "black", [] ],
+
+    [ "btn:1.l", "esp:5", "purple", [] ],
+    [ "btn:2.l", "esp:GND.4", "black", [] ]
+  ]
+}

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Simulação 3D IoT — Sala de Casa (ODS 3)</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel2: #334155;
+    --accent: #38bdf8; --danger: #ef4444; --ok: #22c55e; --warn: #f59e0b;
+    --text: #e2e8f0; --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  html { height: 100%; overflow: hidden; } body { margin: 0; padding: 0; height: 100vh; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: var(--text); position: relative; }
+  header {
+    padding: 6px 16px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #334155; background: rgba(15,23,42,0.7);
+    backdrop-filter: blur(8px); position: fixed; top:0; left:0; right:0; height: 40px; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  header .badge { font-size: 12px; color: var(--muted); }
+  .layout { position: fixed; top: 40px; bottom: 0; left: 0; right: 0; display: grid; grid-template-columns: 1fr 320px; grid-template-rows: 1fr; gap: 0; overflow: hidden; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .side { display: none; } }
+  #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
+  .side { background: var(--panel); border-left: 1px solid #334155; padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; height: 100%; }
+  .card { background: var(--panel2); border-radius: 12px; padding: 8px; flex-shrink: 0; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 13px; }
+  .stat .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .status-pill.ok { background: rgba(34,197,94,0.15); color: var(--ok); }
+  .status-pill.danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .btn { border: none; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 6px; }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-ghost { background: transparent; color: var(--text); border: 1px solid #475569; }
+  .btn-primary { background: var(--accent); color: #0f172a; }
+  .log { font-family: 'Consolas', monospace; font-size: 10.5px; background: #0b1220; border-radius: 8px; padding: 8px; height: 150px; overflow-y: auto; color: #a3e635; border: 1px solid #1f2937; }
+  .log div { margin-bottom: 2px; }
+  .log .err { color: #f87171; }
+  .log .info { color: #93c5fd; }
+  .mqtt-status { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .mqtt-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .mqtt-dot.connected { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .mqtt-dot.error { background: var(--danger); }
+  .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; max-width: 150px; margin: 0 auto; }
+  .key { background: #475569; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px; font-weight: 600; }
+  .key.active { background: var(--accent); color: #0f172a; }
+  footer { display: none; }
+  .hud-bottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,0.7); padding: 8px 16px; border-radius: 8px; font-size: 12px; color: var(--muted); pointer-events: none; z-index: 5; white-space: nowrap; }
+  .led-ind { position: absolute; top: 60px; right: 360px; width: 16px; height: 16px; border-radius: 50%; background: #374151; border: 2px solid #4b5563; z-index: 5; transition: all 0.2s; }
+  .led-ind.on { background: var(--danger); box-shadow: 0 0 16px var(--danger); }
+  .buzz-ind { position: absolute; top: 84px; right: 360px; width: 16px; height: 16px; border-radius: 50%; background: #374151; border: 2px solid #4b5563; z-index: 5; transition: all 0.2s; }
+  .buzz-ind.on { background: var(--warn); box-shadow: 0 0 16px var(--warn); animation: buzz 0.3s infinite; }
+  @keyframes buzz { 0%,100%{transform:scale(1)}50%{transform:scale(1.2)} }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Simulação 3D IoT — Sala de Casa (Detecção de Quedas)</h1>
+    <div class="badge">ODS 3 · Use as setas (↑↓←→) ou WASD. Evite os móveis!</div>
+  </div>
+  <div class="mqtt-status">
+    <span class="mqtt-dot" id="mqttDot"></span>
+    <span id="mqttLabel">Desconectado</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div style="position:relative; height:calc(100vh - 40px); overflow:hidden;">
+    <canvas id="canvas"></canvas>
+    <div class="hud-bottom">Mover: ↑↓←→ / WASD · R: resetar · Mouse: rotacionar câmera</div>
+    <div class="led-ind" id="ledInd" title="LED"></div>
+    <div class="buzz-ind" id="buzzInd" title="Buzzer"></div>
+  </div>
+  <div class="side">
+    <div class="card">
+      <h3>Status do Idoso</h3>
+      <div class="stat"><span>Estado</span><span class="status-pill ok" id="statePill"><span class="dot"></span><span id="stateText">Normal</span></span></div>
+      <div class="stat"><span>SVM (g)</span><span class="val" id="svmVal">1.00</span></div>
+      <div class="stat"><span>ax / ay / az</span><span class="val" id="axesVal">0.00 / 0.00 / 1.00</span></div>
+      <div class="stat"><span>Alarme</span><span class="val" id="alarmVal">Desligado</span></div>
+      <div class="stat"><span>Colisões</span><span class="val" id="collVal">0</span></div>
+      <div class="stat"><span>Dist. obstáculo</span><span class="val" id="distVal">--</span></div>
+      <div class="stat"><span>Latência MQTT (ms)</span><span class="val" id="latVal">--</span></div>
+      <div class="stat"><span>Média latência (ms)</span><span class="val" id="latAvgVal">--</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Controles</h3>
+      <button class="btn btn-danger" id="btnFall">Forçar Queda</button>
+      <button class="btn btn-ghost" id="btnReset">Resetar / Silenciar</button>
+      <button class="btn btn-primary" id="btnTelem">Publicar Telemetria</button>
+    </div>
+
+    <div class="card">
+      <h3>Broker MQTT</h3>
+      <div class="stat"><span>Host</span><span class="val">broker.hivemq.com</span></div>
+      <div class="stat"><span>Porta WS</span><span class="val">8884</span></div>
+      <div class="stat"><span>Tópico</span><span class="val">ods3/queda/#</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Log MQTT</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<footer>Simulação acadêmica 3D · Sala de casa · ODS 3 · Three.js · MQTT via HiveMQ</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+  // ---------- Audio ----------
+  let audioCtx = null;
+  function buzzer(on) {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (on) {
+      if (window._osc) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square'; osc.frequency.value = 880; gain.gain.value = 0.08;
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      window._osc = osc;
+    } else {
+      if (window._osc) { try { window._osc.stop(); } catch(e){} window._osc = null; }
+    }
+  }
+
+  // ---------- MQTT ----------
+  const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+  let client = null, connected = false;
+  const mqttDot = document.getElementById('mqttDot');
+  const mqttLabel = document.getElementById('mqttLabel');
+  const logEl = document.getElementById('log');
+  function log(msg, cls='') {
+    const d = document.createElement('div'); d.className = cls;
+    d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setMqttStatus(ok, text) {
+    mqttDot.className = 'mqtt-dot' + (ok ? ' connected' : ' error');
+    mqttLabel.textContent = text;
+  }
+  function connectMqtt() {
+    try { client = mqtt.connect(BROKER, { clientId: 'web3d-' + Math.random().toString(16).slice(2,8) }); }
+    catch (e) { log('Erro MQTT: ' + e.message, 'err'); setMqttStatus(false, 'Erro'); return; }
+    client.on('connect', () => { connected = true; setMqttStatus(true, 'Conectado'); log('MQTT conectado', 'info'); client.subscribe('ods3/queda/comando'); client.subscribe('ods3/queda/evento'); });
+    client.on('message', (topic, payload) => {
+      const msg = payload.toString();
+      log(`RX ${topic}: ${msg}`, 'info');
+      if (topic === 'ods3/queda/comando' && msg === 'silenciar') resetAlarm();
+      if (topic === 'ods3/queda/evento' && t0 !== null) {
+        const rtt = performance.now() - t0;
+        latencies.push(rtt);
+        if (latVal) latVal.textContent = rtt.toFixed(1);
+        if (latAvgVal && latencies.length) {
+          const avg = latencies.reduce((a,b)=>a+b,0)/latencies.length;
+          latAvgVal.textContent = avg.toFixed(1);
+        }
+        log(`Latência MQTT RTT: ${rtt.toFixed(1)} ms`, 'info');
+        t0 = null;
+      }
+    });
+    client.on('error', (err) => { connected = false; setMqttStatus(false, 'Erro'); log('MQTT erro: ' + err.message, 'err'); });
+    client.on('close', () => { connected = false; setMqttStatus(false, 'Desconectado'); });
+  }
+  function publish(topic, payload, retain=false) {
+    if (!client || !connected) { log('MQTT não conectado — simulando local', 'err'); return; }
+    client.publish(topic, typeof payload === 'string' ? payload : JSON.stringify(payload), { retain, qos: 1 });
+    log(`TX ${topic}: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}`);
+  }
+
+  // ---------- Three.js scene ----------
+  const canvas = document.getElementById('canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+  renderer.shadowMap.enabled = true;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0x87ceeb, 20, 50);
+  const camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+  camera.position.set(4, 6, 10);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(4, 1, 4);
+  controls.enableDamping = true;
+
+  // Lights (warm room)
+  const amb = new THREE.AmbientLight(0xfff5e6, 0.6);
+  scene.add(amb);
+  const dir = new THREE.DirectionalLight(0xfff5e6, 0.7);
+  dir.position.set(5, 10, 5);
+  dir.castShadow = true;
+  scene.add(dir);
+  // lamp point light
+  const lamp = new THREE.PointLight(0xffe4b5, 0.8, 15);
+  lamp.position.set(0, 3.5, 0);
+  scene.add(lamp);
+
+  // Floor (wood)
+  const floorGeo = new THREE.PlaneGeometry(20, 20);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x8b5a3c, roughness: 0.7 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+  const grid = new THREE.GridHelper(20, 20, 0x6b4423, 0x7a4f2e);
+  scene.add(grid);
+
+  // Walls (painted beige)
+  function wall(w, h, x, z, rotY, color=0xe8dcc4) {
+    const g = new THREE.BoxGeometry(w, h, 0.2);
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.position.set(x, h/2, z);
+    mesh.rotation.y = rotY;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+  wall(20, 4, 0, -10, 0);
+  wall(20, 4, 0, 10, 0);
+  wall(20, 4, -10, 0, Math.PI/2);
+  wall(20, 4, 10, 0, Math.PI/2);
+
+  // Baseboard
+  function baseboard(w, x, z, rotY) {
+    const g = new THREE.BoxGeometry(w, 0.15, 0.1);
+    const m = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.position.set(x, 0.075, z);
+    mesh.rotation.y = rotY;
+    scene.add(mesh);
+  }
+  baseboard(20, 0, -9.9, 0);
+  baseboard(20, 0, 9.9, 0);
+  baseboard(20, -9.9, 0, Math.PI/2);
+  baseboard(20, 9.9, 0, Math.PI/2);
+
+  // Rug (center)
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(6, 4), new THREE.MeshStandardMaterial({ color: 0x5b3a29, roughness: 0.9 }));
+  rug.rotation.x = -Math.PI/2;
+  rug.position.set(0, 0.01, -1);
+  scene.add(rug);
+
+  // Sofa
+  const sofaGroup = new THREE.Group();
+  const sofaBase = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.5, 1.2), new THREE.MeshStandardMaterial({ color: 0x5a5a5a }));
+  sofaBase.position.y = 0.25; sofaGroup.add(sofaBase);
+  const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.8, 0.3), new THREE.MeshStandardMaterial({ color: 0x4a4a4a }));
+  sofaBack.position.set(0, 0.65, -0.45); sofaGroup.add(sofaBack);
+  const sofaArmL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.6, 1.2), new THREE.MeshStandardMaterial({ color: 0x4a4a4a }));
+  sofaArmL.position.set(-1.45, 0.4, 0); sofaGroup.add(sofaArmL);
+  const sofaArmR = sofaArmL.clone(); sofaArmR.position.x = 1.45; sofaGroup.add(sofaArmR);
+  // cushions
+  for (let i=-1; i<=1; i++) {
+    const c = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.25, 0.9), new THREE.MeshStandardMaterial({ color: 0x7a7a7a }));
+    c.position.set(i*1.0, 0.62, 0.1); sofaGroup.add(c);
+  }
+  sofaGroup.position.set(-6, 0, -7);
+  scene.add(sofaGroup);
+
+  // Coffee table
+  const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 1.2), new THREE.MeshStandardMaterial({ color: 0xa0522d }));
+  tableTop.position.set(0, 0.4, -1.5); tableTop.castShadow = true;
+  scene.add(tableTop);
+  for (let x=-0.8; x<=0.8; x+=1.6) {
+    for (let z=-0.4; z<=0.4; z+=0.8) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8), new THREE.MeshStandardMaterial({ color: 0x6b4423 }));
+      leg.position.set(x, 0.2, -1.5+z); scene.add(leg);
+    }
+  }
+
+  // TV on wall
+  const tvStand = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.05, 0.4), new THREE.MeshStandardMaterial({ color: 0x2a2a2a }));
+  tvStand.position.set(0, 0.25, -9.6); scene.add(tvStand);
+  const tv = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.5, 0.08), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+  tv.position.set(0, 1.5, -9.85); scene.add(tv);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.3), new THREE.MeshStandardMaterial({ color: 0x1e3a8a, emissive: 0x1e3a8a, emissiveIntensity: 0.3 }));
+  screen.position.set(0, 1.5, -9.8); scene.add(screen);
+
+  // Bookshelf
+  const shelf = new THREE.Group();
+  const shelfBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.4, 0.4), new THREE.MeshStandardMaterial({ color: 0x6b4423 }));
+  shelfBody.position.y = 1.2; shelf.add(shelfBody);
+  for (let y=0.4; y<2.2; y+=0.6) {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.05, 0.35), new THREE.MeshStandardMaterial({ color: 0x8b5a3c }));
+    board.position.set(0, y, 0); shelf.add(board);
+  }
+  // books
+  for (let i=0; i<6; i++) {
+    const book = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.25, 0.2), new THREE.MeshStandardMaterial({ color: [0xef4444,0x3b82f6,0x22c55e,0xf59e0b,0x8b5cf6,0xec4899][i%6] }));
+    book.position.set(-0.4 + i*0.15, 0.55, 0.05); shelf.add(book);
+  }
+  shelf.position.set(8, 0, -7);
+  scene.add(shelf);
+
+  // Wall clock
+  const clockFace = new THREE.Mesh(new THREE.CircleGeometry(0.5, 32), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+  clockFace.position.set(-9.85, 2.6, 0); clockFace.rotation.y = Math.PI/2; scene.add(clockFace);
+  const clockHand = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.4, 0.02), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+  clockHand.position.set(-9.8, 2.6, 0); clockHand.rotation.z = -0.5; scene.add(clockHand);
+
+  // Pictures on wall
+  function picture(x, y, z, rotY, color) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 0.05), new THREE.MeshStandardMaterial({ color: 0x8b5a3c }));
+    frame.position.set(x, y, z); frame.rotation.y = rotY; scene.add(frame);
+    const canvas2 = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.7), new THREE.MeshStandardMaterial({ color }));
+    canvas2.position.set(x, y, z + (rotY===0?0.03:-0.03)); canvas2.rotation.y = rotY; scene.add(canvas2);
+  }
+  picture(3, 2.2, -9.85, 0, 0x3b82f6);
+  picture(-4, 2.0, -9.85, 0, 0x22c55e);
+  picture(-9.85, 2.0, 4, Math.PI/2, 0xf59e0b);
+
+  // Plant
+  const plantPot = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.2, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x8b4513 }));
+  plantPot.position.set(9, 0.15, 8); scene.add(plantPot);
+  const plant = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 12), new THREE.MeshStandardMaterial({ color: 0x228b22 }));
+  plant.position.set(9, 0.7, 8); scene.add(plant);
+
+  // Character (modelo 3D OldMan.glb - Mixamo rigged)
+  const charGroup = new THREE.Group();
+  charGroup.position.set(4, 0, 4);
+  scene.add(charGroup);
+  const charRadius = 0.45;
+  const gloader = new THREE.GLTFLoader();
+  gloader.load('OldMan.glb', (gltf) => {
+    const root = gltf.scene;
+    // Esconder meshes duplicados: manter apenas SkinnedMesh (rigado); se nao houver, manter o de menor Y (mais baixo)
+    const allMeshes = [];
+    root.traverse((o) => { if (o.isMesh) allMeshes.push(o); });
+    const skinned = allMeshes.filter((m) => m.type === 'SkinnedMesh' || m.isSkinnedMesh);
+    if (skinned.length > 0) {
+      allMeshes.forEach((m) => { m.visible = skinned.indexOf(m) !== -1; });
+    } else {
+      // fallback: manter o mesh mais baixo (menor Y), esconder os demais
+      let keep = allMeshes[0];
+      allMeshes.forEach((m) => {
+        const b = new THREE.Box3().setFromObject(m);
+        const kb = new THREE.Box3().setFromObject(keep);
+        if (b.min.y < kb.min.y) keep = m;
+      });
+      allMeshes.forEach((m) => { if (m !== keep) m.visible = false; });
+    }
+    // Corrigir materiais: textura estava como emissive; usar como map (cor base)
+    root.traverse((o) => {
+      if (o.isMesh && o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => {
+          if (m.emissiveMap && !m.map) { m.map = m.emissiveMap; }
+          m.emissive.set(0, 0, 0);
+          m.emissiveMap = null;
+          m.color.set(0xffffff);
+          m.metalness = 0.0;
+          m.roughness = 0.8;
+          m.needsUpdate = true;
+        });
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    // Fechar os bracos: rotacionar ossos do rig (Mixamo)
+    const bones = {};
+    root.traverse((o) => { if (o.isBone) bones[o.name] = o; });
+    const boneNames = Object.keys(bones);
+    const leftArm = bones['mixamorigLeftArm'];
+    const rightArm = bones['mixamorigRightArm'];
+    if (leftArm) leftArm.rotation.z += 0.9;
+    if (rightArm) rightArm.rotation.z -= 0.9;
+    // Adicionar sensor (MPU6050) no peito (osso Spine2), sem editar o arquivo 3D
+    const chestBone = bones['mixamorigSpine2'] || bones['mixamorigSpine1'] || bones['mixamorigSpine'];
+    if (chestBone) {
+      const sensor = new THREE.Mesh(
+        new THREE.SphereGeometry(3.2, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 1.0 })
+      );
+      sensor.position.set(12, 0, 16); // mais 40% para a direita + frente do peito
+      sensor.castShadow = true;
+      chestBone.add(sensor);
+    }
+    // Guardar pose base (bind + bracos fechados) para animacao de caminhada
+    const walkBones = ['mixamorigLeftUpLeg','mixamorigLeftLeg','mixamorigRightUpLeg','mixamorigRightLeg','mixamorigLeftArm','mixamorigLeftForeArm','mixamorigRightArm','mixamorigRightForeArm'];
+    const boneMap = {};
+    walkBones.forEach((name) => {
+      const b = bones[name];
+      if (b) { b.userData.bind = { x: b.rotation.x, y: b.rotation.y, z: b.rotation.z }; boneMap[name] = b; }
+    });
+    charGroup.userData.bones = boneMap;
+    // Auto-escala: ajustar altura para ~1.7 unidades
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const targetH = 2.5;
+    const s = targetH / (size.y || 1);
+    root.scale.setScalar(s);
+    // Recalcular box apos escala
+    const box2 = new THREE.Box3().setFromObject(root);
+    const min = box2.min;
+    root.position.y = -min.y + 0.9; // pes no chao (+ lift)
+    // orientacao: de frente para a camera (nao rotaciona ao andar)
+    root.rotation.y = Math.PI;
+    charGroup.add(root);
+    // Guardar referencia para animacao (opcional)
+    charGroup.userData.mixer = null;
+    if (gltf.animations && gltf.animations.length) {
+      const mixer = new THREE.AnimationMixer(root);
+      // Nao tocar animacao por padrao (pose estatica com bracos fechados)
+      charGroup.userData.mixer = mixer;
+      charGroup.userData.animations = gltf.animations;
+    }
+    log('Modelo 3D OldMan.glb carregado (rigged, ' + gltf.animations.length + ' anim).', 'info');
+  }, undefined, (err) => {
+    log('Erro ao carregar OldMan.glb: ' + (err && err.message ? err.message : err), 'err');
+  });
+
+  // Obstacles (furniture collisions)
+  const obstacles = [];
+  const obsData = [
+    { x: -6, z: -7, radius: 1.5 },
+    { x: 0, z: -1.5, radius: 0.8 },
+    { x: 0, z: -9.8, radius: 1.1 },
+    { x: 8, z: -7, radius: 0.6 },
+    { x: 9, z: 8, radius: 0.4 },
+  ];
+  obsData.forEach(o => {
+    obstacles.push({ mesh: null, radius: o.radius, x: o.x, z: o.z });
+    // zona de colisao visivel (wireframe)
+    const zone = new THREE.Mesh(new THREE.SphereGeometry(o.radius + charRadius, 16, 16), new THREE.MeshBasicMaterial({ color: 0xef4444, wireframe: true, transparent: true, opacity: 0.25 }));
+    zone.position.set(o.x, 0.5, o.z);
+    scene.add(zone);
+  });
+
+  // ---------- State ----------
+  let fallen = false;
+  let alarmActive = false;
+  let svm = 1.0, ax = 0, ay = 0, az = 1.0;
+  let collisions = 0;
+  let invincible = false;
+  let invincibleTimer = null;
+  const keys = { up: false, down: false, left: false, right: false };
+  const speed = 4;
+
+  const statePill = document.getElementById('statePill');
+  const stateText = document.getElementById('stateText');
+  const svmVal = document.getElementById('svmVal');
+  const axesVal = document.getElementById('axesVal');
+  const alarmVal = document.getElementById('alarmVal');
+  const collVal = document.getElementById('collVal');
+  const distVal = document.getElementById('distVal');
+  const latVal = document.getElementById('latVal');
+  const latAvgVal = document.getElementById('latAvgVal');
+  const latencies = [];
+  let t0 = null;
+  let walkTime = 0;
+  const ledInd = document.getElementById('ledInd');
+  const buzzInd = document.getElementById('buzzInd');
+
+  function updateUI() {
+    svmVal.textContent = svm.toFixed(2);
+    axesVal.textContent = `${ax.toFixed(2)} / ${ay.toFixed(2)} / ${az.toFixed(2)}`;
+    alarmVal.textContent = alarmActive ? 'ATIVO' : 'Desligado';
+    collVal.textContent = collisions;
+    if (fallen) { statePill.className = 'status-pill danger'; stateText.textContent = 'QUEDA'; }
+    else { statePill.className = 'status-pill ok'; stateText.textContent = 'Normal'; }
+    ledInd.classList.toggle('on', alarmActive);
+    buzzInd.classList.toggle('on', alarmActive);
+  }
+
+  function triggerFall() {
+    if (fallen || invincible) return;
+    fallen = true; alarmActive = true; collisions++;
+    // resetar pose de caminhada
+    const bm0 = charGroup.userData.bones || {};
+    Object.keys(bm0).forEach((name) => {
+      const b = bm0[name];
+      if (b && b.userData && b.userData.bind) {
+        b.rotation.x = b.userData.bind.x; b.rotation.y = b.userData.bind.y; b.rotation.z = b.userData.bind.z;
+      }
+    });
+    walkTime = 0;
+    charGroup.rotation.x = Math.PI / 2;
+    charGroup.position.y = 0.4;
+    buzzer(true);
+    svm = 2.6; ax = 0.4; ay = 1.2; az = 2.2;
+    updateUI();
+    const evt = { device_id: 'web3d-01', tipo: 'queda', svm_max: svm, ts: Date.now(), local: 'sala' };
+    t0 = performance.now();
+    publish('ods3/queda/evento', evt, true);
+    publish('ods3/queda/telemetria', { device_id: 'web3d-01', svm, ax, ay, az, estado: 'queda', rssi: -42, ts: Date.now() });
+    log('QUEDA DETECTADA (colisao) — buzzer + LED acionados', 'err');
+  }
+
+  function resetAlarm() {
+    fallen = false; alarmActive = false;
+    const bm1 = charGroup.userData.bones || {};
+    Object.keys(bm1).forEach((name) => {
+      const b = bm1[name];
+      if (b && b.userData && b.userData.bind) {
+        b.rotation.x = b.userData.bind.x; b.rotation.y = b.userData.bind.y; b.rotation.z = b.userData.bind.z;
+      }
+    });
+    walkTime = 0;
+    charGroup.rotation.x = 0;
+    charGroup.rotation.y = 0;
+    charGroup.rotation.z = 0;
+    charGroup.position.y = 0;
+    charGroup.position.x = 4;
+    charGroup.position.z = 4;
+    if (window._osc) { try { window._osc.stop(); } catch(e){} window._osc = null; }
+    buzzer(false);
+    if (audioCtx) { try { audioCtx.close(); } catch(e){} audioCtx = null; }
+    svm = 1.0; ax = 0; ay = 0; az = 1.0;
+    updateUI();
+    publish('ods3/queda/status', 'online', true);
+    log('Sistema resetado / alarme silenciado — idoso de pe', 'info');
+    invincible = true;
+    if (invincibleTimer) clearTimeout(invincibleTimer);
+    invincibleTimer = setTimeout(() => { invincible = false; }, 2000);
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { keys.up = true; }
+    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { keys.down = true; }
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { keys.left = true; }
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { keys.right = true; }
+    if (e.key === 'r' || e.key === 'R') resetAlarm();
+    if (e.key === ' ' ) { e.preventDefault(); triggerFall(); }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { keys.up = false; }
+    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { keys.down = false; }
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { keys.left = false; }
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { keys.right = false; }
+  });
+
+  document.getElementById('btnFall').addEventListener('click', triggerFall);
+  document.getElementById('btnReset').addEventListener('click', resetAlarm);
+  document.getElementById('btnTelem').addEventListener('click', () => {
+    publish('ods3/queda/telemetria', { device_id: 'web3d-01', svm: +svm.toFixed(2), ax: +ax.toFixed(2), ay: +ay.toFixed(2), az: +az.toFixed(2), estado: fallen ? 'queda' : 'normal', rssi: -42, ts: Date.now() });
+  });
+
+  connectMqtt();
+  updateUI();
+  invincible = true;
+  if (invincibleTimer) clearTimeout(invincibleTimer);
+  invincibleTimer = setTimeout(() => { invincible = false; }, 3000);
+
+  const clock = new THREE.Clock();
+  function checkCollision() {
+    const cx = charGroup.position.x, cz = charGroup.position.z;
+    let nearest = Infinity;
+    for (const o of obstacles) {
+      const dx = cx - o.x;
+      const dz = cz - o.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      if (dist < nearest) nearest = dist;
+    }
+    if (distVal) distVal.textContent = nearest.toFixed(2);
+    if (invincible) return false;
+    for (const o of obstacles) {
+      const dx = cx - o.x;
+      const dz = cz - o.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      if (dist < charRadius + o.radius - 0.15) return true;
+    }
+    return false;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    if (!fallen) {
+      charGroup.rotation.x = 0;
+      charGroup.rotation.z = 0;
+      charGroup.position.y = 0;
+      if (!alarmActive) buzzer(false);
+      let vx = 0, vz = 0;
+      if (keys.up) vz -= 1;
+      if (keys.down) vz += 1;
+      if (keys.left) vx -= 1;
+      if (keys.right) vx += 1;
+      const len = Math.sqrt(vx*vx + vz*vz);
+      if (len > 0) { vx /= len; vz /= len; }
+      charGroup.position.x += vx * speed * dt;
+      charGroup.position.z += vz * speed * dt;
+      charGroup.position.x = Math.max(-9, Math.min(9, charGroup.position.x));
+      charGroup.position.z = Math.max(-9, Math.min(9, charGroup.position.z));
+      // girar para a direcao do movimento (base do modelo = Math.PI, por isso o offset)
+      if (len > 0) charGroup.rotation.y = Math.atan2(vx, vz) - Math.PI;
+      svm = 1.0 + (len > 0 ? 0.15 : 0) + Math.random()*0.05;
+      ax = vx * 0.3; ay = 0.1; az = 1.0 + vz * 0.2;
+      if (checkCollision()) triggerFall();
+      // Animacao procedural de caminhada (pernas/bracos)
+      const moving = len > 0;
+      if (moving) { walkTime += dt * 9; }
+      const amp = moving ? 0.5 : 0;
+      const phase = walkTime;
+      const s = Math.sin(phase);
+      const bm = (charGroup.userData.bones) || {};
+      function setBone(name, dx) {
+        const b = bm[name]; if (!b || !b.userData || !b.userData.bind) return;
+        b.rotation.x = b.userData.bind.x + dx;
+      }
+      setBone('mixamorigLeftUpLeg',  amp * s);
+      setBone('mixamorigRightUpLeg', -amp * s);
+      setBone('mixamorigLeftLeg',  Math.max(0, -s) * 0.65);
+      setBone('mixamorigRightLeg', Math.max(0,  s) * 0.65);
+      setBone('mixamorigLeftArm',  -amp * 0.55 * s);
+      setBone('mixamorigRightArm',  amp * 0.55 * s);
+    }
+    controls.update();
+    const cw = canvas.parentElement.clientWidth || window.innerWidth;
+    const ch = canvas.parentElement.clientHeight || (window.innerHeight - 40);
+    if (canvas.width !== cw || canvas.height !== ch) {
+      renderer.setSize(cw, ch, false);
+      canvas.style.width = cw + 'px';
+      canvas.style.height = ch + 'px';
+    }
+    camera.aspect = cw / ch;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  setInterval(() => {
+    publish('ods3/queda/telemetria', { device_id: 'web3d-01', svm: +svm.toFixed(2), ax: +ax.toFixed(2), ay: +ay.toFixed(2), az: +az.toFixed(2), estado: fallen ? 'queda' : 'normal', rssi: -40 - Math.floor(Math.random()*10), ts: Date.now() });
+  }, 4000);
+
+  log('Simulação 3D iniciada. Mova o idoso com as setas. Evite os móveis!', 'info');
+</script>
+</body>
+</html>
